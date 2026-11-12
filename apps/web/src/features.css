@@ -6930,6 +6930,26 @@ tr.hidden-markup td {
   font-size: 12px;
 }
 
+/* Assembly proposals in the same panel: a named section over the proposal cards. */
+.ap-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ap-section h4 {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.ap-note {
+  margin: 2px 0;
+}
+
+.ap-name {
+  font-weight: 600;
+}
+
 /* A takeoff quantity set by hand (it does not follow the measurement) */
 .set-by-hand {
   color: #f59e0b;

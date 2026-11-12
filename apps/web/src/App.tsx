@@ -49,6 +49,7 @@ import { isNotToScale, scaleReviewRows, type PageScan } from './measure/scaleRev
 import { pageReadings } from './measure/scaleCheck';
 import { proposeViews } from './measure/viewScales';
 import { stateOf as proposalState, takeoffProposals } from './assemblies/proposals';
+import { assemblyProposals } from './assemblies/assemblyProposals';
 import type { MeasureDefaults } from './components/MeasurementsPanel';
 import { itemQuantities, rollup } from './assemblies/quantities';
 import { MarkupSummaryDialog, type SummaryExportRequest } from './components/ExportDialog';
@@ -6025,23 +6026,29 @@ export function App() {
   const activeStudioDoc = studioDocOf(activeOpen?.file.id);
   const activeReadOnly = useSyncExternalStore(activeOpen ? (l) => activeOpen.store.subscribe(l) : noSubscribe, () => activeOpen?.store.readOnly ?? false);
 
-  // Takeoff proposals from an AI client open Takeoff Review, so a person sees them straight away.
+  // Takeoff and assembly proposals from an AI client open Takeoff Review, so a person sees them straight away.
   const activeHash = activeOpen?.store.fileHash ?? null;
   useEffect(() => {
     if (!activeHash || !activeOpen) return;
     const store = activeOpen.store;
-    const waiting = () => takeoffProposals.list(activeHash).filter((p) => proposalState(p, store.get(p.markupId)) === 'pending').length;
+    const waiting = () => takeoffProposals.list(activeHash).filter((p) => proposalState(p, store.get(p.markupId)) === 'pending').length + assemblyProposals.list(activeHash).filter((p) => !p.rejected).length;
     let seen = waiting();
     // Ones that came while another document was in front are mentioned once it is.
-    if (seen) setNotice(`${seen} takeoff proposal${seen === 1 ? ' is' : 's are'} waiting for your review in Tools › Takeoff › Review AI Proposals.`);
-    return takeoffProposals.subscribe(() => {
+    if (seen) setNotice(`${seen} proposal${seen === 1 ? ' is' : 's are'} waiting for your review in Tools › Takeoff › Review AI Proposals.`);
+    const check = () => {
       const now = waiting();
       if (now > seen) {
         setTakeoffReviewOpen(true);
-        setNotice(`${now} takeoff proposal${now === 1 ? ' is' : 's are'} waiting for your review. Nothing is added to the takeoff until you approve it.`);
+        setNotice(`${now} proposal${now === 1 ? ' is' : 's are'} waiting for your review. Nothing is added until you approve it.`);
       }
       seen = now;
-    });
+    };
+    const offTakeoff = takeoffProposals.subscribe(check);
+    const offAssemblies = assemblyProposals.subscribe(check);
+    return () => {
+      offTakeoff();
+      offAssemblies();
+    };
   }, [activeHash, activeOpen]);
 
 

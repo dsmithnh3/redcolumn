@@ -3,6 +3,7 @@ import { STITCH_METHODS, stitchCall } from './assistantStitch';
 import { VIEWPORT_METHODS, viewportCall } from './assistantViewports';
 import { requireScaleFor, SCALE_METHODS, scaleCall, type ScaleMethod } from './assistantScales';
 import { STANDARD_METHODS, standardCall, type AssistantStandards, type StandardMethod } from './assistantStandards';
+import { ASSEMBLY_PROPOSAL_METHODS, assemblyProposalCall, type AssemblyProposalMethod } from './assistantAssemblies';
 import { isMeasureKind, measureLabel, scaleEquation } from '@nb/measure';
 import type { PageRegion, TextWord } from '@nb/pdf-core';
 import { stateOf as proposalState, takeoffProposals, type TakeoffProposal } from '../assemblies/proposals';
@@ -959,13 +960,13 @@ function listAssemblies(docs: readonly AssistantDocument[], params: unknown) {
       name: a.name,
       ...(a.description ? { description: a.description } : {}),
       variables: a.variables,
-      items: a.items.map((i) => ({ name: i.name, unit: i.unit, formula: i.formula, ...(i.waste ? { waste: i.waste } : {}), ...(i.roundUp ? { roundUp: true } : {}), ...(i.roundUp && i.roundTo ? { roundTo: i.roundTo } : {}) })),
+      items: a.items.map((i) => ({ name: i.name, unit: i.unit, formula: i.formula, ...(i.waste ? { waste: i.waste } : {}), ...(i.roundUp ? { roundUp: true } : {}), ...(i.roundUp && i.roundTo ? { roundTo: i.roundTo } : {}), ...(i.unitCost !== undefined ? { unitCost: i.unitCost } : {}) })),
     })),
     formulaNames: MEASURED_NAMES.map((n) => n.name),
   };
 }
 
-function assemblyOf(doc: AssistantDocument, raw: unknown) {
+export function assemblyOf(doc: AssistantDocument, raw: unknown) {
   if (typeof raw !== 'string' || !raw.trim()) throw new Error('Say which assembly: its name or id from list_assemblies.');
   const wanted = raw.trim().toLowerCase();
   const found = doc.store.assemblies().find((a) => a.id === raw || a.name.trim().toLowerCase() === wanted);
@@ -1184,5 +1185,6 @@ export async function assistantCall(docs: readonly AssistantDocument[], method: 
   if ((VIEWPORT_METHODS as readonly string[]).includes(method)) return viewportCall(docs, method, params);
   if ((SCALE_METHODS as readonly string[]).includes(method)) return scaleCall(docs, method as ScaleMethod, params);
   if ((STANDARD_METHODS as readonly string[]).includes(method)) return standardCall(docs, method as StandardMethod, params, env.standards);
+  if ((ASSEMBLY_PROPOSAL_METHODS as readonly string[]).includes(method)) return assemblyProposalCall(docs, method as AssemblyProposalMethod, params);
   throw new Error('Unknown tool.');
 }

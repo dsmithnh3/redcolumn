@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { MARKUP_LABELS, type Assembly, type Markup, type MarkupStore } from '@nb/markup';
 import { itemQuantities } from '../assemblies/quantities';
 import { approveProposals, stateOf, takeoffProposals, useTakeoffProposals, type ApprovalEdit, type TakeoffProposal } from '../assemblies/proposals';
+import { approveAssemblyProposals, assemblyProposals, useAssemblyProposals, type AssemblyProposal } from '../assemblies/assemblyProposals';
 import { cellsFor, formatNumber, type CellContext } from '../columns/listColumns';
 
 interface Props {
@@ -35,6 +36,9 @@ export function TakeoffReview({ store, me, ctx, pageLabel, onShow, onMessage, on
   const shown = rows.filter((r) => show === 'all' || r.state === 'pending');
   const pending = rows.filter((r) => r.state === 'pending');
   const pickedPending = pending.filter((r) => picked.has(r.p.id));
+  const assemblyRows = useAssemblyProposals(store.fileHash).map((p) => ({ p, state: p.rejected ? ('rejected' as const) : ('pending' as const) }));
+  const shownAssemblies = assemblyRows.filter((r) => show === 'all' || r.state === 'pending');
+  const pendingAssemblies = assemblyRows.filter((r) => r.state === 'pending');
   const readOnly = store.readOnly;
 
   const approve = (list: TakeoffProposal[]) => {
@@ -47,12 +51,24 @@ export function TakeoffReview({ store, me, ctx, pageLabel, onShow, onMessage, on
     setPicked((s) => new Set([...s].filter((id) => !list.some((p) => p.id === id))));
   };
   const edit = (id: string, patch: (e: ApprovalEdit) => ApprovalEdit) => setEdits((all) => ({ ...all, [id]: patch(all[id] ?? {}) }));
+  const approveAssembly = (list: AssemblyProposal[], alsoLibrary: boolean) => {
+    try {
+      const { approved, skipped, librarySaved } = approveAssemblyProposals(store, list, alsoLibrary);
+      const parts = [`Approved ${approved.length} assembly proposal${approved.length === 1 ? '' : 's'}`];
+      if (alsoLibrary && approved.length) parts.push(librarySaved ? 'saved to My Assemblies' : 'but My Assemblies could not be saved (this browser would not keep them: storage full or unavailable)');
+      if (skipped.length) parts.push(`${skipped.length} could not be (the assembly it replaces is gone, the name is taken, or a column now clashes with a variable)`);
+      onMessage(`${parts.join('; ')}. Undo takes it back.`);
+    } catch (err) {
+      onMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
+  const rejectAssembly = (list: AssemblyProposal[]) => assemblyProposals.reject(store.fileHash, list.map((p) => p.id), me);
 
   return (
     <aside className="takeoff-review" role="complementary" aria-label="Takeoff review">
       <header className="takeoff-review-head">
         <h3>Review AI Proposals</h3>
-        <span className="hint-text">{pending.length} waiting</span>
+        <span className="hint-text">{pending.length + pendingAssemblies.length} waiting</span>
         <span className="grow" />
         <select aria-label="Show" value={show} onChange={(e) => setShow(e.target.value as 'pending' | 'all')}>
           <option value="pending">Waiting for review</option>
@@ -64,7 +80,25 @@ export function TakeoffReview({ store, me, ctx, pageLabel, onShow, onMessage, on
       </header>
       <p className="hint-text takeoff-review-note">An AI client proposed these through the local assistant. Check each one against the drawing: nothing is added to the takeoff until you approve it.</p>
       <div className="takeoff-review-list">
-        {!shown.length && <p className="empty">{proposals.length ? 'Nothing waiting for review.' : 'No proposals yet. Ask your AI client (connected to redcolumn) to propose a takeoff.'}</p>}
+        {!shown.length && !shownAssemblies.length && <p className="empty">{proposals.length || assemblyRows.length ? 'Nothing waiting for review.' : 'No proposals yet. Ask your AI client (connected to redcolumn) to propose a takeoff or an assembly.'}</p>}
+        {!!shownAssemblies.length && (
+          <section className="ap-section" aria-label="Assembly proposals">
+            <h4>Assembly proposals</h4>
+            <p className="hint-text ap-note">Assemblies an AI client proposed for this document. Approving writes them into its assemblies; nothing is added until you approve it.</p>
+            {shownAssemblies.map(({ p, state }) => (
+              <AssemblyCard
+                key={p.id}
+                p={p}
+                state={state}
+                assemblies={assemblies}
+                readOnly={readOnly}
+                onApprove={(alsoLibrary) => approveAssembly([p], alsoLibrary)}
+                onReject={() => rejectAssembly([p])}
+                onReopen={() => assemblyProposals.reopen(store.fileHash, [p.id])}
+              />
+            ))}
+          </section>
+        )}
         {shown.map(({ p, m, state }) => (
           <Proposal
             key={p.id}
@@ -262,6 +296,120 @@ function Proposal({
             Reject
           </button>
           <button type="button" className="btn small primary" disabled={readOnly || !m || !assembly} onClick={onApprove}>
+            Approve
+          </button>
+        </div>
+      )}
+    </article>
+  );
+}
+
+/** What an edit changes in the assembly's items, as names: added, removed and changed. */
+function itemChanges(p: AssemblyProposal, existing: Assembly | undefined): { added: string[]; removed: string[]; changed: string[] } {
+  const key = (name: string) => name.trim().toLowerCase();
+  const oldItems = new Map(existing?.items.map((i) => [key(i.name), i]));
+  const newNames = new Set(p.items.map((i) => key(i.name)));
+  const added = p.items.filter((i) => !oldItems.has(key(i.name))).map((i) => i.name);
+  const removed = existing?.items.filter((i) => !newNames.has(key(i.name))).map((i) => i.name) ?? [];
+  const changed = p.items
+    .filter((i) => {
+      const old = oldItems.get(key(i.name));
+      return old && (old.unit !== i.unit || old.formula !== i.formula || old.waste !== i.waste || old.roundUp !== i.roundUp || old.roundTo !== i.roundTo || old.unitCost !== i.unitCost);
+    })
+    .map((i) => i.name);
+  return { added, removed, changed };
+}
+
+/** One proposed assembly: its items and variables, what an edit changes, and the AI's reasoning. */
+function AssemblyCard({
+  p,
+  state,
+  assemblies,
+  readOnly,
+  onApprove,
+  onReject,
+  onReopen,
+}: {
+  p: AssemblyProposal;
+  state: 'pending' | 'rejected';
+  assemblies: readonly Assembly[];
+  readOnly: boolean;
+  onApprove: (alsoLibrary: boolean) => void;
+  onReject: () => void;
+  onReopen: () => void;
+}) {
+  const [alsoLibrary, setAlsoLibrary] = useState(false);
+  const existing = p.replacesId ? assemblies.find((a) => a.id === p.replacesId) : undefined;
+  const pending = state === 'pending';
+  const { added, removed, changed } = itemChanges(p, existing);
+  const cost = (v: number | undefined) => (v === undefined ? '—' : formatNumber(v, 2));
+
+  return (
+    <article className={`takeoff-proposal ${state}`} aria-label={`Assembly proposal for ${p.name}`}>
+      <div className="tp-head">
+        <span className="ap-name">{p.name}</span>
+        <span className="hint-text">{existing ? `Replaces ${existing.name}` : p.replacesId ? 'Replaces a deleted assembly' : 'New assembly'}</span>
+        <span className="grow" />
+        <span className={`tp-state ${state}`}>{pending ? 'Waiting' : 'Rejected'}</span>
+      </div>
+      {p.description && <p className="hint-text ap-note">{p.description}</p>}
+      {existing && (
+        <p className="hint-text ap-note">
+          {[added.length ? `added: ${added.join(', ')}` : '', removed.length ? `removed: ${removed.join(', ')}` : '', changed.length ? `changed: ${changed.join(', ')}` : ''].filter(Boolean).join(' · ') || 'no changes to items'}
+        </p>
+      )}
+      {p.variables.length > 0 && <div className="hint-text tp-vars">Variables: {p.variables.map((v) => `${v.name} = ${formatNumber(v.value, 4)}`).join(', ')}</div>}
+      <table className="qty-table tp-items">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Formula</th>
+            <th className="num">Waste</th>
+            <th>Rounding</th>
+            <th className="num">Unit cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          {p.items.map((i) => (
+            <tr key={i.name}>
+              <td>
+                {i.name} <span className="hint-text">{i.unit}</span>
+              </td>
+              <td>
+                <code>{i.formula}</code>
+              </td>
+              <td className="num">{i.waste ? `${formatNumber(i.waste, 1)}%` : '—'}</td>
+              <td>{i.roundUp ? `up${i.roundTo && i.roundTo !== 1 ? ` to ${formatNumber(i.roundTo, 2)}` : ''}` : '—'}</td>
+              <td className="num">{cost(i.unitCost)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <blockquote className="tp-reason">
+        <span className="hint-text">
+          {p.source}, {when(p.createdAt)}:
+        </span>{' '}
+        {p.reasoning}
+      </blockquote>
+      {state === 'rejected' && p.rejected && (
+        <p className="hint-text">
+          Rejected by {p.rejected.by}, {when(p.rejected.at)}.{' '}
+          <button type="button" className="rc-linkish" onClick={onReopen}>
+            Review again
+          </button>
+        </p>
+      )}
+      {pending && (
+        <div className="tp-actions">
+          <label className="tp-select-all" title="Keep a copy in this browser's My Assemblies, for use in any document">
+            <input type="checkbox" checked={alsoLibrary} onChange={(e) => setAlsoLibrary(e.target.checked)} disabled={readOnly} />
+            <span>Also save to My Assemblies</span>
+          </label>
+          <span className="grow" />
+          <button type="button" className="btn small" onClick={onReject}>
+            Reject
+          </button>
+          <button type="button" className="btn small primary" disabled={readOnly} onClick={() => onApprove(alsoLibrary)}>
             Approve
           </button>
         </div>

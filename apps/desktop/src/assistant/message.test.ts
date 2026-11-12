@@ -66,6 +66,8 @@ test('initialize and tools/list answer even when the app is closed', async () =>
     'list_assemblies',
     'propose_takeoff',
     'list_takeoff_proposals',
+    'propose_assembly',
+    'list_assembly_proposals',
     'start_comparison',
     'get_comparison',
     'report_document_changes',
@@ -100,7 +102,7 @@ test('initialize and tools/list answer even when the app is closed', async () =>
 test('reads say they are read-only, and nothing else does', async () => {
   const list = JSON.parse((await handleMcpMessage(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }), async () => ({}))) ?? '') as { result: { tools: { name: string; annotations: { readOnlyHint: boolean; destructiveHint: boolean } }[] } };
   const reads = list.result.tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name);
-  assert.deepEqual(reads, ['list_open_documents', 'list_markups', 'list_commands', 'get_page', 'get_page_image', 'get_page_text', 'list_assemblies', 'list_takeoff_proposals', 'get_comparison', 'get_stitching', 'get_stitch_image', 'list_viewports', 'get_sheet_info', 'get_drawing_standard', 'list_sheet_links']);
+  assert.deepEqual(reads, ['list_open_documents', 'list_markups', 'list_commands', 'get_page', 'get_page_image', 'get_page_text', 'list_assemblies', 'list_takeoff_proposals', 'list_assembly_proposals', 'get_comparison', 'get_stitching', 'get_stitch_image', 'list_viewports', 'get_sheet_info', 'get_drawing_standard', 'list_sheet_links']);
   // Only the tools that remove things, or run any command, are flagged destructive.
   const flagged = list.result.tools.filter((t) => t.annotations.destructiveHint).map((t) => t.name);
   assert.deepEqual(flagged, ['run_command', 'delete_markups', 'delete_match_lines']);
