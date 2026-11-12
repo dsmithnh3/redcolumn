@@ -412,7 +412,7 @@ const TOOLS: ToolDef[] = [
     name: 'list_assemblies',
     title: 'List takeoff assemblies',
     description:
-      "Lists the drawing's takeoff assemblies: each one's items with their units, formulas and unit costs, and its variables. formulaNames are the measured values a formula can use ([Length], [Area], [Count]...). Use this before propose_takeoff and propose_assembly.",
+      "Lists the drawing's takeoff assemblies: each one's items with their units, formulas and unit costs, and its variables. formulaNames are the measured values a formula can use ([Length], [Area], [Count]...) and columnNames the list columns (the document's own and the built-in ones) it can also use. Use this before propose_takeoff and propose_assembly.",
     inputSchema: { type: 'object', properties: { document: documentProp } },
     annotations: READS,
   },
@@ -458,9 +458,9 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: 'propose_assembly',
-    title: 'Propose takeoff assemblies',
+    title: 'Propose new or edited assemblies',
     description:
-      'Proposes takeoff assemblies for the drawing: new ones, or edits of existing ones with replaces (their id or name). You can only propose: each assembly waits in Tools › Takeoff › Review AI Proposals, with your reasoning, until a person approves or rejects it. Approving writes the document; nothing changes until then. Each item is a quantity worked out by a formula over the measured values (formulaNames from list_assemblies) and the assembly\'s own variables. An edit keeps the assembly and its matching items\' identity, so measurements stay linked and keep any quantities set by hand. All assemblies are checked first; one bad item means none is kept.',
+      'Proposes takeoff assemblies for the drawing: new ones, or edits of existing ones with replaces (their id or name). You can only propose: each assembly waits in Tools › Takeoff › Review AI Proposals, with your reasoning, until a person approves or rejects it. Approving writes the document; nothing changes until then. Each item is a quantity worked out by a formula over the measured values and list columns (formulaNames and columnNames from list_assemblies) and the assembly\'s own variables. An edit keeps the assembly and its matching items\' identity, so measurements stay linked and keep any quantities set by hand; an edit that sends no description keeps the assembly\'s notes. All assemblies are checked first; one bad item means none is kept.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -473,13 +473,13 @@ const TOOLS: ToolDef[] = [
           items: {
             type: 'object',
             properties: {
-              name: { type: 'string', description: 'The assembly\'s name. It has to be free unless replaces names the assembly that has it.' },
-              description: { type: 'string', description: 'What it measures and includes, shown with the assembly.' },
+              name: { type: 'string', maxLength: 200, description: "The assembly's name. It has to be free unless replaces names the assembly that has it." },
+              description: { type: 'string', maxLength: 2000, description: 'What it measures and includes, shown with the assembly. An edit that sends none keeps the existing notes; an empty one clears them.' },
               variables: {
                 type: 'array',
                 maxItems: 20,
                 description: 'Named numbers the formulas use, such as a stud spacing.',
-                items: { type: 'object', properties: { name: { type: 'string' }, value: { type: 'number' } }, required: ['name', 'value'] },
+                items: { type: 'object', properties: { name: { type: 'string', maxLength: 200, description: 'The name formulas use in [brackets], such as Stud Spacing.' }, value: { type: 'number' } }, required: ['name', 'value'] },
               },
               items: {
                 type: 'array',
@@ -489,18 +489,18 @@ const TOOLS: ToolDef[] = [
                 items: {
                   type: 'object',
                   properties: {
-                    name: { type: 'string', description: 'The material or labour, e.g. Studs.' },
-                    unit: { type: 'string', description: 'As shown: ea, sheets, lf, m².' },
-                    formula: { type: 'string', description: 'e.g. [Length] / [Spacing] + 1 or [Wall Area] * [Layers] / 32.' },
-                    waste: { type: 'number', description: 'Waste allowance in percent, 0 to 100, added before rounding.' },
+                    name: { type: 'string', maxLength: 200, description: 'The material or labour, e.g. Studs.' },
+                    unit: { type: 'string', maxLength: 40, description: 'As shown: ea, sheets, lf, m².' },
+                    formula: { type: 'string', maxLength: 1000, description: 'e.g. [Length] / [Spacing] + 1 or [Wall Area] * [Layers] / 32.' },
+                    waste: { type: 'number', minimum: 0, maximum: 100, description: 'Waste allowance in percent, 0 to 100, added before rounding.' },
                     roundUp: { type: 'boolean', description: 'Round the quantity up (sheets, boxes, lengths of pipe).' },
-                    roundTo: { type: 'number', description: 'With roundUp, round up to a multiple of this instead of 1: 10 for pipe in 10 ft lengths.' },
-                    unitCost: { type: 'number', description: 'Price per unit, for the cost. 0 or more.' },
+                    roundTo: { type: 'number', minimum: 0.000001, maximum: 1000000, description: 'With roundUp, round up to a multiple of this instead of 1: 10 for pipe in 10 ft lengths.' },
+                    unitCost: { type: 'number', minimum: 0, maximum: 1000000000, description: 'Price per unit, for the cost.' },
                   },
                   required: ['name', 'unit', 'formula'],
                 },
               },
-              replaces: { type: 'string', description: 'The id or name of the existing assembly this proposes an edit of. Its items keep their identity where the item names match.' },
+              replaces: { type: 'string', description: 'The id or name of the existing assembly this proposes an edit of. Its items keep their identity where the item names match. One edit of an assembly per call.' },
               reasoning: { type: 'string', description: 'Why these items and formulas, for the person deciding.' },
             },
             required: ['name', 'items', 'reasoning'],

@@ -62,7 +62,7 @@ For each proposal you see the measurement (click its name to show it on the shee
 
 Each approval is saved on the measurement: who approved it, when, and which AI proposal it came from. [[Ctrl+Z]] takes an approval back, and the proposal waits for review again. Proposals and rejections stay on this device.
 
-The same panel has an **Assembly proposals** section: assemblies the AI proposed for this document (new ones, or edits marked *Replaces*, with what the edit adds, removes and changes). **Approve** writes the assembly into the document's assemblies; tick **Also save to My Assemblies** to keep a copy in this browser as well. After you approve an assembly proposal, [[Ctrl+Z]] takes the document change back, but the proposal does not come back to the list (unlike takeoff proposals): the AI has to propose it again. **Reject** keeps it out, and it stays listed under **All, with decisions**.
+The same panel has an **Assembly proposals** section: assemblies the AI proposed for this document (new ones, or edits marked *Replaces*). The card shows an edit's changes — the name, the notes, the variables (added, removed, and old → new values) and the items — beside the AI's reasoning. **Approve** writes the assembly into the document's assemblies; tick **Also save to My Assemblies** to keep a copy in this browser as well: it merges by name, so an assembly already saved there with the same name is replaced, and the message says which. After you approve an assembly proposal, [[Ctrl+Z]] takes the document change back, but the proposal does not come back to the list (unlike takeoff proposals): the AI has to propose it again. **Reject** keeps it out, and it stays listed under **All, with decisions**.
 
 ## Share assemblies
 

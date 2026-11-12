@@ -53,9 +53,13 @@ export function TakeoffReview({ store, me, ctx, pageLabel, onShow, onMessage, on
   const edit = (id: string, patch: (e: ApprovalEdit) => ApprovalEdit) => setEdits((all) => ({ ...all, [id]: patch(all[id] ?? {}) }));
   const approveAssembly = (list: AssemblyProposal[], alsoLibrary: boolean) => {
     try {
-      const { approved, skipped, librarySaved } = approveAssemblyProposals(store, list, alsoLibrary);
+      const { approved, skipped, librarySaved, libraryReplaced } = approveAssemblyProposals(store, list, alsoLibrary);
       const parts = [`Approved ${approved.length} assembly proposal${approved.length === 1 ? '' : 's'}`];
-      if (alsoLibrary && approved.length) parts.push(librarySaved ? 'saved to My Assemblies' : 'but My Assemblies could not be saved (this browser would not keep them: storage full or unavailable)');
+      if (alsoLibrary && approved.length) {
+        if (!librarySaved) parts.push('but My Assemblies could not be saved (this browser would not keep them: storage full or unavailable)');
+        else if (libraryReplaced.length) parts.push(`replaced ${libraryReplaced.join(', ')} in My Assemblies`);
+        else parts.push('saved to My Assemblies');
+      }
       if (skipped.length) parts.push(`${skipped.length} could not be (the assembly it replaces is gone, the name is taken, or a column now clashes with a variable)`);
       onMessage(`${parts.join('; ')}. Undo takes it back.`);
     } catch (err) {
@@ -304,6 +308,25 @@ function Proposal({
   );
 }
 
+/** An item as the stored proposal keeps it: trimmed, waste 0 and roundTo 1 dropped, so an item copied unchanged is not flagged. */
+function carried(i: { name: string; unit: string; formula: string; waste?: number; roundUp?: boolean; roundTo?: number; unitCost?: number }) {
+  return {
+    name: i.name.trim(),
+    unit: i.unit.trim(),
+    formula: i.formula.trim(),
+    waste: i.waste ?? 0,
+    roundUp: i.roundUp === true,
+    roundTo: i.roundUp === true && i.roundTo !== undefined && i.roundTo !== 1 ? i.roundTo : undefined,
+    unitCost: i.unitCost,
+  };
+}
+
+const differs = (a: Parameters<typeof carried>[0], b: Parameters<typeof carried>[0]) => {
+  const x = carried(a);
+  const y = carried(b);
+  return x.name !== y.name || x.unit !== y.unit || x.formula !== y.formula || x.waste !== y.waste || x.roundUp !== y.roundUp || x.roundTo !== y.roundTo || x.unitCost !== y.unitCost;
+};
+
 /** What an edit changes in the assembly's items, as names: added, removed and changed. */
 function itemChanges(p: AssemblyProposal, existing: Assembly | undefined): { added: string[]; removed: string[]; changed: string[] } {
   const key = (name: string) => name.trim().toLowerCase();
@@ -314,10 +337,31 @@ function itemChanges(p: AssemblyProposal, existing: Assembly | undefined): { add
   const changed = p.items
     .filter((i) => {
       const old = oldItems.get(key(i.name));
-      return old && (old.unit !== i.unit || old.formula !== i.formula || old.waste !== i.waste || old.roundUp !== i.roundUp || old.roundTo !== i.roundTo || old.unitCost !== i.unitCost);
+      return old && differs(old, i);
     })
     .map((i) => i.name);
   return { added, removed, changed };
+}
+
+const brief = (text: string) => (text.length > 40 ? `${text.slice(0, 39)}…` : text);
+
+/** What an edit changes around the items: the name, the notes, and the variables (old → new). */
+function assemblyChanges(p: AssemblyProposal, existing: Assembly | undefined): string[] {
+  if (!existing) return [];
+  const out: string[] = [];
+  if (existing.name.trim() !== p.name.trim()) out.push(`renamed from ${existing.name}`);
+  const notes = p.description !== undefined ? p.description : (existing.description ?? '');
+  if ((existing.description ?? '') !== notes) out.push(`notes: ${brief(existing.description ?? '') || 'none'} → ${brief(notes) || 'none'}`);
+  const key = (name: string) => name.trim().toLowerCase();
+  const oldVars = new Map(existing.variables.map((v) => [key(v.name), v]));
+  const newKeys = new Set(p.variables.map((v) => key(v.name)));
+  for (const v of p.variables) {
+    const old = oldVars.get(key(v.name));
+    if (!old) out.push(`variable added: ${v.name} = ${formatNumber(v.value, 4)}`);
+    else if (old.value !== v.value) out.push(`variable ${v.name}: ${formatNumber(old.value, 4)} → ${formatNumber(v.value, 4)}`);
+  }
+  for (const v of existing.variables) if (!newKeys.has(key(v.name))) out.push(`variable removed: ${v.name}`);
+  return out;
 }
 
 /** One proposed assembly: its items and variables, what an edit changes, and the AI's reasoning. */
@@ -342,6 +386,7 @@ function AssemblyCard({
   const existing = p.replacesId ? assemblies.find((a) => a.id === p.replacesId) : undefined;
   const pending = state === 'pending';
   const { added, removed, changed } = itemChanges(p, existing);
+  const about = assemblyChanges(p, existing);
   const cost = (v: number | undefined) => (v === undefined ? '—' : formatNumber(v, 2));
 
   return (
@@ -354,9 +399,10 @@ function AssemblyCard({
       </div>
       {p.description && <p className="hint-text ap-note">{p.description}</p>}
       {existing && (
-        <p className="hint-text ap-note">
-          {[added.length ? `added: ${added.join(', ')}` : '', removed.length ? `removed: ${removed.join(', ')}` : '', changed.length ? `changed: ${changed.join(', ')}` : ''].filter(Boolean).join(' · ') || 'no changes to items'}
-        </p>
+        <>
+          {!!about.length && <p className="hint-text ap-note">{about.join(' · ')}</p>}
+          <p className="hint-text ap-note">{[added.length ? `added: ${added.join(', ')}` : '', removed.length ? `removed: ${removed.join(', ')}` : '', changed.length ? `changed: ${changed.join(', ')}` : ''].filter(Boolean).join(' · ') || 'no changes to items'}</p>
+        </>
       )}
       {p.variables.length > 0 && <div className="hint-text tp-vars">Variables: {p.variables.map((v) => `${v.name} = ${formatNumber(v.value, 4)}`).join(', ')}</div>}
       <table className="qty-table tp-items">
@@ -401,7 +447,7 @@ function AssemblyCard({
       )}
       {pending && (
         <div className="tp-actions">
-          <label className="tp-select-all" title="Keep a copy in this browser's My Assemblies, for use in any document">
+          <label className="tp-select-all" title="Keep a copy in this browser's My Assemblies, for any document. An assembly already saved there with the same name is replaced.">
             <input type="checkbox" checked={alsoLibrary} onChange={(e) => setAlsoLibrary(e.target.checked)} disabled={readOnly} />
             <span>Also save to My Assemblies</span>
           </label>

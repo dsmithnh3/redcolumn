@@ -4,6 +4,14 @@ import { MarkupStore, type Assembly } from '@nb/markup';
 import { assemblyProposals } from '../assemblies/assemblyProposals.ts';
 import { assistantCall, type AssistantDocument } from './assistant.ts';
 
+// The proposals are kept per document in localStorage; a stub lets the tests see what is kept.
+const saved = new Map<string, string>();
+(globalThis as { localStorage?: unknown }).localStorage = {
+  getItem: (k: string) => saved.get(k) ?? null,
+  setItem: (k: string, v: string) => void saved.set(k, v),
+  removeItem: (k: string) => void saved.delete(k),
+};
+
 const wall: Assembly = {
   id: 'wall',
   name: 'Stud Wall',
@@ -138,4 +146,75 @@ test('an edit cannot take the name of another assembly', async () => {
   await assistantCall([d], 'propose_assembly', { assemblies: [ok({ name: 'Wall 2', replaces: 'wall' })] });
   const [edit] = assemblyProposals.list(d.store.fileHash);
   assert.equal(edit!.replacesId, 'wall');
+});
+
+test("a formula may use the list's columns, and list_assemblies names them", async () => {
+  const d = await drawing();
+  d.store.setColumnSet({ columns: [{ id: 'pitch', name: 'Pitch factor', type: 'number' }], statuses: d.store.columnSet().statuses });
+  const listed = (await assistantCall([d], 'list_assemblies', {})) as { columnNames: string[]; formulaNames: string[] };
+  assert.ok(listed.columnNames.includes('Pitch factor'), 'the document column');
+  assert.ok(listed.columnNames.includes('Slope'), 'a built-in column label');
+  assert.ok(!listed.formulaNames.includes('Slope'), 'formulaNames stays the measured values');
+  const made = (await assistantCall([d], 'propose_assembly', { assemblies: [ok({ items: [{ name: 'Sheet', unit: 'm²', formula: '[Area] * [Pitch factor] / 100' }] })] })) as { proposed: number };
+  assert.equal(made.proposed, 1, 'a column formula is accepted, as the real lookup resolves columns');
+  // An edit that renames the assembly and keeps the column formula round-trips.
+  const edit = (await assistantCall([d], 'propose_assembly', { assemblies: [ok({ name: 'Roof sheet', replaces: 'wall', items: [{ name: 'Sheet', unit: 'm²', formula: '[Area] * [Pitch factor] / 100' }] })] })) as { proposed: number };
+  assert.equal(edit.proposed, 1);
+  const p = assemblyProposals.list(d.store.fileHash).find((x) => x.name === 'Roof sheet')!;
+  assert.equal(p.replacesId, 'wall');
+});
+
+test('over-length fields are refused, not cut', async () => {
+  const d = await drawing();
+  const long = 'x'.repeat(201);
+  await assert.rejects(() => assistantCall([d], 'propose_assembly', { assemblies: [ok({ name: long })] }), /Assembly 1 .*: name has to be 200 characters or fewer/);
+  await assert.rejects(() => assistantCall([d], 'propose_assembly', { assemblies: [ok({ items: [{ name: 'Pipe', unit: 'm'.repeat(41), formula: '1' }] })] }), /Pipe's unit has to be 40 characters or fewer/);
+  await assert.rejects(() => assistantCall([d], 'propose_assembly', { assemblies: [ok({ description: 'd'.repeat(2001) })] }), /description has to be 2000 characters or fewer/);
+  await assert.rejects(() => assistantCall([d], 'propose_assembly', { assemblies: [ok({ variables: [{ name: long, value: 1 }] })] }), /a variable name has to be 200 characters or fewer/);
+  await assert.rejects(() => assistantCall([d], 'propose_assembly', { assemblies: [ok({ items: [{ name: long, unit: 'ea', formula: '1' }] })] }), /an item name has to be 200 characters or fewer/);
+});
+
+test('a formula has a length limit', async () => {
+  const d = await drawing();
+  await assert.rejects(() => assistantCall([d], 'propose_assembly', { assemblies: [ok({ items: [{ name: 'Pipe', unit: 'm', formula: '1'.repeat(1001) }] })] }), /the formula for Pipe has to be 1000 characters or fewer/);
+});
+
+test("when the browser will not keep the proposals, the call says so and keeps nothing", async () => {
+  const d = await drawing();
+  const original = (globalThis as { localStorage?: unknown }).localStorage;
+  (globalThis as { localStorage?: unknown }).localStorage = {
+    getItem: () => null,
+    setItem: () => {
+      throw new Error('full');
+    },
+    removeItem: () => {},
+  };
+  try {
+    await assert.rejects(() => assistantCall([d], 'propose_assembly', { assemblies: [ok()] }), /Could not keep the proposals: this browser's storage is full or unavailable/);
+  } finally {
+    (globalThis as { localStorage?: unknown }).localStorage = original;
+  }
+  const none = (await assistantCall([d], 'list_assembly_proposals', {})) as { proposals: unknown[] };
+  assert.deepEqual(none.proposals, [], 'nothing was kept in memory either');
+});
+
+test('two edits of the same assembly in one call are refused, naming both', async () => {
+  const d = await drawing();
+  const item = { name: 'Studs', unit: 'ea', formula: '[Length] * 2' };
+  await assert.rejects(
+    () => assistantCall([d], 'propose_assembly', { assemblies: [ok({ name: 'A', replaces: 'wall', items: [item] }), ok({ name: 'B', replaces: 'Stud Wall', items: [item] })] }),
+    /Assembly 2 \(B\) and Assembly 1 \(A\) both replace "Stud Wall"/,
+  );
+  const none = (await assistantCall([d], 'list_assembly_proposals', {})) as { proposals: unknown[] };
+  assert.deepEqual(none.proposals, [], 'nothing was kept');
+});
+
+test('names cannot hide characters that do not display; ZWJ is fine', async () => {
+  const d = await drawing();
+  await assert.rejects(() => assistantCall([d], 'propose_assembly', { assemblies: [ok({ name: 'Pipe\u202Erun' })] }), /name cannot contain characters that do not display/);
+  await assert.rejects(() => assistantCall([d], 'propose_assembly', { assemblies: [ok({ name: 'Pi\u0007pe' })] }), /name cannot contain characters that do not display/);
+  await assert.rejects(() => assistantCall([d], 'propose_assembly', { assemblies: [ok({ items: [{ name: 'Pipe', unit: 'm\u200B', formula: '1' }] })] }), /Pipe's unit cannot contain characters that do not display/);
+  await assert.rejects(() => assistantCall([d], 'propose_assembly', { assemblies: [ok({ variables: [{ name: 'Spacing\u2066', value: 1 }] })] }), /a variable name cannot contain characters that do not display/);
+  const made = (await assistantCall([d], 'propose_assembly', { assemblies: [ok({ name: 'Na\u200Dm' })] })) as { proposed: number };
+  assert.equal(made.proposed, 1, 'ZWJ is allowed, as some scripts need it');
 });

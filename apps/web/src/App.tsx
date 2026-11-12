@@ -49,7 +49,7 @@ import { isNotToScale, scaleReviewRows, type PageScan } from './measure/scaleRev
 import { pageReadings } from './measure/scaleCheck';
 import { proposeViews } from './measure/viewScales';
 import { stateOf as proposalState, takeoffProposals } from './assemblies/proposals';
-import { assemblyProposals } from './assemblies/assemblyProposals';
+import { assemblyProposals, newlyWaiting } from './assemblies/assemblyProposals';
 import type { MeasureDefaults } from './components/MeasurementsPanel';
 import { itemQuantities, rollup } from './assemblies/quantities';
 import { MarkupSummaryDialog, type SummaryExportRequest } from './components/ExportDialog';
@@ -6031,15 +6031,17 @@ export function App() {
   useEffect(() => {
     if (!activeHash || !activeOpen) return;
     const store = activeOpen.store;
-    const waiting = () => takeoffProposals.list(activeHash).filter((p) => proposalState(p, store.get(p.markupId)) === 'pending').length + assemblyProposals.list(activeHash).filter((p) => !p.rejected).length;
-    let seen = waiting();
+    // Ids, not counts: approving a proposal takes ids away without the store saying anything, so
+    // a count would hide a proposal that arrived in the same moment.
+    const waitingIds = () => new Set([...takeoffProposals.list(activeHash).filter((p) => proposalState(p, store.get(p.markupId)) === 'pending').map((p) => `t${p.id}`), ...assemblyProposals.list(activeHash).filter((p) => !p.rejected).map((p) => `a${p.id}`)]);
+    let seen = waitingIds();
     // Ones that came while another document was in front are mentioned once it is.
-    if (seen) setNotice(`${seen} proposal${seen === 1 ? ' is' : 's are'} waiting for your review in Tools › Takeoff › Review AI Proposals.`);
+    if (seen.size) setNotice(`${seen.size} proposal${seen.size === 1 ? ' is' : 's are'} waiting for your review in Tools › Takeoff › Review AI Proposals.`);
     const check = () => {
-      const now = waiting();
-      if (now > seen) {
+      const now = waitingIds();
+      if (newlyWaiting(seen, now).length) {
         setTakeoffReviewOpen(true);
-        setNotice(`${now} proposal${now === 1 ? ' is' : 's are'} waiting for your review. Nothing is added until you approve it.`);
+        setNotice(`${now.size} proposal${now.size === 1 ? ' is' : 's are'} waiting for your review. Nothing is added until you approve it.`);
       }
       seen = now;
     };

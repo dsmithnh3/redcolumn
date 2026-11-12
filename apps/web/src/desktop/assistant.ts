@@ -7,6 +7,7 @@ import { ASSEMBLY_PROPOSAL_METHODS, assemblyProposalCall, type AssemblyProposalM
 import { isMeasureKind, measureLabel, scaleEquation } from '@nb/measure';
 import type { PageRegion, TextWord } from '@nb/pdf-core';
 import { stateOf as proposalState, takeoffProposals, type TakeoffProposal } from '../assemblies/proposals';
+import { BUILT_IN_COLUMNS } from '../columns/listColumns';
 import { MEASURED_NAMES } from '../assemblies/quantities';
 import { documentParagraphs, exactMatches, type AiDecision, type ChangeKind, type Paragraph } from '../compare/semantic';
 import { semanticCompare, type SemanticState } from '../compare/semanticStore';
@@ -963,6 +964,7 @@ function listAssemblies(docs: readonly AssistantDocument[], params: unknown) {
       items: a.items.map((i) => ({ name: i.name, unit: i.unit, formula: i.formula, ...(i.waste ? { waste: i.waste } : {}), ...(i.roundUp ? { roundUp: true } : {}), ...(i.roundUp && i.roundTo ? { roundTo: i.roundTo } : {}), ...(i.unitCost !== undefined ? { unitCost: i.unitCost } : {}) })),
     })),
     formulaNames: MEASURED_NAMES.map((n) => n.name),
+    columnNames: [...doc.store.columnSet().columns.map((c) => c.name), ...BUILT_IN_COLUMNS.map((b) => b.label)],
   };
 }
 
